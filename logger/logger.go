@@ -9,6 +9,7 @@ import (
 	"strings"
 )
 
+// ANSI 颜色代码
 const (
 	Reset  = "\033[0m"
 	Red    = "\033[31m"
@@ -22,11 +23,13 @@ const (
 	Bold   = "\033[1m"
 )
 
+// ColoredHandler 是一个支持彩色输出的自定义 slog Handler
 type ColoredHandler struct {
 	level slog.Level
 	attrs []slog.Attr
 }
 
+// NewColoredHandler 创建一个新的彩色处理器
 func NewColoredHandler(level slog.Level) *ColoredHandler {
 	return &ColoredHandler{
 		level: level,
@@ -34,30 +37,51 @@ func NewColoredHandler(level slog.Level) *ColoredHandler {
 	}
 }
 
+// Enabled 检查是否应该记录给级别级别的日志
 func (h *ColoredHandler) Enabled(_ context.Context, level slog.Level) bool {
 	return level >= h.level
 }
 
+// Handle 处理日志记录
 func (h *ColoredHandler) Handle(_ context.Context, r slog.Record) error {
+	// 获取颜色和级别字符串
 	color, levelStr := h.getLevelColorAndString(r.Level)
+
+	// 格式化时间
 	timeStr := r.Time.Format("2006-01-02 15:04:05.000")
+
+	// 获取调用者信息（文件名和行号）
 	file, line := h.getCallerInfo()
 
+	// 构建基本日志行
 	var builder strings.Builder
+
+	// 时间（灰色）
 	builder.WriteString(Gray + timeStr + Reset)
 	builder.WriteString(" | ")
+
+	// 级别（带颜色和粗体）
 	builder.WriteString(color + Bold + levelStr + Reset)
 	builder.WriteString(" | ")
+
+	// 文件名和行号（青色）
 	builder.WriteString(Cyan + file + ":" + fmt.Sprintf("%d", line) + Reset)
 	builder.WriteString(" | ")
+
+	// 消息（带颜色）
 	builder.WriteString(color + r.Message + Reset)
 
+	// 处理属性
 	if r.NumAttrs() > 0 || len(h.attrs) > 0 {
 		builder.WriteString(" | ")
+
+		// 添加处理器级别的属性
 		for _, attr := range h.attrs {
 			builder.WriteString(h.formatAttr(attr))
 			builder.WriteString(" ")
 		}
+
+		// 添加记录级别的属性
 		r.Attrs(func(attr slog.Attr) bool {
 			builder.WriteString(h.formatAttr(attr))
 			builder.WriteString(" ")
@@ -65,10 +89,12 @@ func (h *ColoredHandler) Handle(_ context.Context, r slog.Record) error {
 		})
 	}
 
+	// 输出到标准输出
 	fmt.Println(builder.String())
 	return nil
 }
 
+// getCallerInfo 获取调用者的文件名和行号
 func (h *ColoredHandler) getCallerInfo() (string, int) {
 	for skip := 4; skip < 10; skip++ {
 		_, file, line, ok := runtime.Caller(skip)
@@ -82,6 +108,7 @@ func (h *ColoredHandler) getCallerInfo() (string, int) {
 	return "unknown", 0
 }
 
+// WithAttrs 返回一个带有给定属性的新处理器
 func (h *ColoredHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	newAttrs := make([]slog.Attr, len(h.attrs)+len(attrs))
 	copy(newAttrs, h.attrs)
@@ -92,10 +119,12 @@ func (h *ColoredHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	}
 }
 
+// WithGroup 返回一个带有给定组名的新处理器
 func (h *ColoredHandler) WithGroup(name string) slog.Handler {
 	return h
 }
 
+// getLevelColorAndString 根据日志级别返回对应的颜色和字符串
 func (h *ColoredHandler) getLevelColorAndString(level slog.Level) (string, string) {
 	switch level {
 	case slog.LevelDebug:
@@ -111,10 +140,12 @@ func (h *ColoredHandler) getLevelColorAndString(level slog.Level) (string, strin
 	}
 }
 
+// formatAttr 格式化属性
 func (h *ColoredHandler) formatAttr(attr slog.Attr) string {
 	return Purple + attr.Key + Reset + "=" + Blue + fmt.Sprintf("%v", attr.Value) + Reset
 }
 
+// SetupLogger 创建配置好的 logger
 func SetupLogger(level slog.Level) *slog.Logger {
 	handler := NewColoredHandler(level)
 	return slog.New(handler)

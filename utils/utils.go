@@ -12,6 +12,7 @@ const (
 	ImgDir = ".assets"
 )
 
+// ResolveAppDir 解析程序所在目录（可执行文件目录或工作目录）
 func ResolveAppDir() (string, error) {
 	ex, err := os.Executable()
 	if err == nil {
@@ -27,14 +28,17 @@ func ResolveAppDir() (string, error) {
 	return wd, nil
 }
 
+// DefaultDataDir 返回默认的数据目录（appDir/data）
 func DefaultDataDir(appDir string) string {
 	return filepath.Join(appDir, "data")
 }
 
+// DefaultCookiePath 返回默认的 cookie 文件路径（appDir/cookies.json）
 func DefaultCookiePath(appDir string) string {
 	return filepath.Join(appDir, "cookies.json")
 }
 
+// GetExecutionTime 计算执行耗时并格式化
 func GetExecutionTime(startTime, endTime time.Time) string {
 	duration := endTime.Sub(startTime)
 	hours := int(duration.Hours())
@@ -52,6 +56,7 @@ func GetExecutionTime(startTime, endTime time.Time) string {
 	return result
 }
 
+// ToSafeFilename 将输入字符串转换为安全的文件名
 func ToSafeFilename(in string) string {
 	rp := strings.NewReplacer(
 		"/", "_",

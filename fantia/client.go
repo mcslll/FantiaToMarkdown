@@ -17,6 +17,7 @@ const (
 	ChromeUserAgent = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36`
 )
 
+// ReadCookiesFromFile 从文件中读取 Cookies
 func ReadCookiesFromFile(filePath string) ([]Cookie, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -37,6 +38,7 @@ func ReadCookiesFromFile(filePath string) ([]Cookie, error) {
 	return cookies, nil
 }
 
+// GetCookiesString 获取 Cookies 字符串
 func GetCookiesString(cookies []Cookie) string {
 	var cookiesString string
 	for _, cookie := range cookies {
@@ -45,6 +47,7 @@ func GetCookiesString(cookies []Cookie) string {
 	return cookiesString
 }
 
+// GetCookies 从指定路径获取 Cookies 字符串
 func GetCookies(cookiePath string) (string, error) {
 	cookies, err := ReadCookiesFromFile(cookiePath)
 	if err != nil {
@@ -53,6 +56,7 @@ func GetCookies(cookiePath string) (string, error) {
 	return GetCookiesString(cookies), nil
 }
 
+// buildFantiaHeaders 构建 Fantia 专用的请求头
 func buildFantiaHeaders(host string, cookieString string) http.Header {
 	return http.Header{
 		"User-Agent": {ChromeUserAgent},
@@ -61,6 +65,7 @@ func buildFantiaHeaders(host string, cookieString string) http.Header {
 	}
 }
 
+// NewRequestGet 发送 GET 请求并返回响应字节
 func NewRequestGet(host string, url string, cookieString string) ([]byte, error) {
 	var body bytes.Buffer
 	err := requests.

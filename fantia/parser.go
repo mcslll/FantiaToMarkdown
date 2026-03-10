@@ -17,6 +17,7 @@ import (
 	"golang.org/x/exp/slog"
 )
 
+// GetMaxPage 获取 Fanclub 的最大页数
 func GetMaxPage(cfg *config.Config, fanclubID string, cookieString string) (int, error) {
 	apiUrl := fmt.Sprintf("%s/fanclubs/%s/posts", cfg.HostUrl, fanclubID)
 	body, err := NewRequestGet(cfg.Host, apiUrl, cookieString)
@@ -32,7 +33,7 @@ func GetMaxPage(cfg *config.Config, fanclubID string, cookieString string) (int,
 	maxPage := 1
 	re := regexp.MustCompile(`page=(\d+)`)
 
-	// Try fa-angle-double-right
+	// 尝试寻找 fa-angle-double-right
 	doc.Find("i.fa-angle-double-right").Each(func(i int, s *goquery.Selection) {
 		parent := s.Parent()
 		if parent.Is("a.page-link") {
@@ -47,7 +48,7 @@ func GetMaxPage(cfg *config.Config, fanclubID string, cookieString string) (int,
 		}
 	})
 
-	// Fallback to all page-links
+	// 兜底尝试所有 page-link
 	doc.Find("a.page-link").Each(func(i int, s *goquery.Selection) {
 		href, _ := s.Attr("href")
 		match := re.FindStringSubmatch(href)
@@ -62,6 +63,7 @@ func GetMaxPage(cfg *config.Config, fanclubID string, cookieString string) (int,
 	return maxPage, nil
 }
 
+// CollectPostsFromPage 抓取指定页面的帖子列表
 func CollectPostsFromPage(cfg *config.Config, fanclubID string, page int, cookieString string) ([]Post, error) {
 	apiUrl := fmt.Sprintf("%s/fanclubs/%s/posts?page=%d", cfg.HostUrl, fanclubID, page)
 	body, err := NewRequestGet(cfg.Host, apiUrl, cookieString)
@@ -90,6 +92,7 @@ func CollectPostsFromPage(cfg *config.Config, fanclubID string, page int, cookie
 	return posts, nil
 }
 
+// GetPostContent 获取帖子的正文详情 HTML
 func GetPostContent(cfg *config.Config, postUrl string, cookieString string) (string, error) {
 	body, err := NewRequestGet(cfg.Host, postUrl, cookieString)
 	if err != nil {
@@ -101,7 +104,7 @@ func GetPostContent(cfg *config.Config, postUrl string, cookieString string) (st
 		return "", err
 	}
 
-	// 提取正文
+	// 提取正文内容
 	contentHtml, err := doc.Find(".post-content, .post-body, .post-description").Html()
 	if err != nil {
 		return "", fmt.Errorf("failed to find post content: %w", err)
@@ -110,6 +113,7 @@ func GetPostContent(cfg *config.Config, postUrl string, cookieString string) (st
 	return contentHtml, nil
 }
 
+// GetPosts 调度抓取逻辑：列表 -> 详情 -> 转换 -> 保存
 func GetPosts(cfg *config.Config, fanclubID string, cookieString string) error {
 	maxPage, err := GetMaxPage(cfg, fanclubID, cookieString)
 	if err != nil {
@@ -117,6 +121,7 @@ func GetPosts(cfg *config.Config, fanclubID string, cookieString string) error {
 	}
 	slog.Info("Detected Max Page", "maxPage", maxPage)
 
+	// 创建存储目录
 	outputDir := filepath.Join(cfg.DataDir, fanclubID)
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
