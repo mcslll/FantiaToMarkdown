@@ -83,6 +83,14 @@ func downloadAndGetImgMarkdown(postTitle string, outputDir string, urls []string
 		fileName := fmt.Sprintf("%s_%d%s", utils.ToSafeFilename(postTitle), i, ext)
 		localFilePath := filepath.Join(assetsDir, fileName)
 
+		// 检查图片是否已存在，存在则跳过下载
+		if _, err := os.Stat(localFilePath); err == nil {
+			slog.Debug("Image already exists, skipping download", "path", localFilePath)
+			relPath := filepath.Join(ImgDir, fileName)
+			mdRefs = append(mdRefs, fmt.Sprintf("![image](%s)", relPath))
+			continue
+		}
+
 		slog.Debug("Downloading image", "url", url, "dest", localFilePath)
 
 		// 增加 60 秒下载超时
