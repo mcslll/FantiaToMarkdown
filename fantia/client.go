@@ -1,22 +1,27 @@
 package fantia
 
 import (
+	"FantiaToMarkdown/config"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
 	"github.com/carlmjohnson/requests"
+	"golang.org/x/exp/slog"
 )
 
 const (
 	DelayMs         = 500
 	ChromeUserAgent = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36`
 )
+
+// Cookie 结构体已在 model.go 中定义
 
 // ReadCookiesFromFile 从文件中读取 Cookies
 func ReadCookiesFromFile(filePath string) ([]Cookie, error) {
@@ -71,7 +76,7 @@ func buildFantiaHeaders(cookieString string, extraHeaders map[string]string) htt
 }
 
 // NewRequestGet 发送 GET 请求并返回响应字节
-func NewRequestGet(host string, url string, cookieString string, extraHeaders ...map[string]string) ([]byte, error) {
+func NewRequestGet(cfg *config.Config, urlStr string, cookieString string, extraHeaders ...map[string]string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -80,14 +85,26 @@ func NewRequestGet(host string, url string, cookieString string, extraHeaders ..
 		extra = extraHeaders[0]
 	}
 
+	rb := requests.
+		URL(urlStr).
+		Headers(buildFantiaHeaders(cookieString, extra))
+
+	// 设置代理
+	if cfg.ProxyUrl != "" {
+		proxy, err := url.Parse(cfg.ProxyUrl)
+		if err != nil {
+			slog.Error("Invalid proxy URL", "url", cfg.ProxyUrl, "error", err)
+		} else {
+			rb.Transport(&http.Transport{
+				Proxy: http.ProxyURL(proxy),
+			})
+		}
+	}
+
 	var body bytes.Buffer
-	err := requests.
-		URL(url).
-		Headers(buildFantiaHeaders(cookieString, extra)).
-		ToBytesBuffer(&body).
-		Fetch(ctx)
+	err := rb.ToBytesBuffer(&body).Fetch(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("GET %s failed: %w", url, err)
+		return nil, fmt.Errorf("GET %s failed: %w", urlStr, err)
 	}
 	return body.Bytes(), nil
 }

@@ -25,6 +25,7 @@ var (
 	cookiePathFlag string
 	fanclubID      string
 	tagFlag        string
+	proxyFlag      string
 	debugMode      bool
 
 	cfg *config.Config
@@ -126,6 +127,7 @@ func main() {
 			&cli.StringFlag{Name: "host", Destination: &fantiaHost, Value: "fantia.jp", Usage: "Fantia host"},
 			&cli.StringFlag{Name: "dir", Destination: &dataDirFlag, Value: "", Usage: "Data directory"},
 			&cli.StringFlag{Name: "cookie", Destination: &cookiePathFlag, Value: "", Usage: "Path to cookies.json"},
+			&cli.StringFlag{Name: "proxy", Destination: &proxyFlag, Value: "", Usage: "Proxy URL (e.g. http://127.0.0.1:7890)"},
 			&cli.BoolFlag{Name: "debug", Destination: &debugMode, Value: false, Usage: "Enable debug logging"},
 		},
 		Before: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
@@ -154,7 +156,7 @@ func main() {
 				cookiePath = utils.DefaultCookiePath(appDir)
 			}
 
-			cfg = config.NewConfig(fantiaHost, dataDir, cookiePath)
+			cfg = config.NewConfig(fantiaHost, dataDir, cookiePath, proxyFlag)
 			return ctx, nil
 		},
 		After: func(ctx context.Context, cmd *cli.Command) error {

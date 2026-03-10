@@ -6,6 +6,8 @@ import (
 	"FantiaToMarkdown/utils"
 	"context"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,7 +32,7 @@ func SavePost(cfg *config.Config, post fantia.Post, fileName string, outputDir s
 	}
 
 	// 2. 下载图片并获取本地引用路径
-	picMarkdown, err := downloadAndGetImgMarkdown(post.Title, outputDir, post.Pictures)
+	picMarkdown, err := downloadAndGetImgMarkdown(cfg, post.Title, outputDir, post.Pictures)
 	if err != nil {
 		slog.Error("Failed to download images", "title", post.Title, "error", err)
 	}
@@ -60,7 +62,7 @@ func SavePost(cfg *config.Config, post fantia.Post, fileName string, outputDir s
 	return os.WriteFile(filePath, []byte(finalContent), 0644)
 }
 
-func downloadAndGetImgMarkdown(postTitle string, outputDir string, urls []string) (string, error) {
+func downloadAndGetImgMarkdown(cfg *config.Config, postTitle string, outputDir string, urls []string) (string, error) {
 	if len(urls) == 0 {
 		return "", nil
 	}
@@ -71,12 +73,12 @@ func downloadAndGetImgMarkdown(postTitle string, outputDir string, urls []string
 	}
 
 	var mdRefs []string
-	for i, url := range urls {
+	for i, urlStr := range urls {
 		// 确定后缀名
 		ext := ".jpg"
-		if strings.Contains(url, ".webp") {
+		if strings.Contains(urlStr, ".webp") {
 			ext = ".webp"
-		} else if strings.Contains(url, ".png") {
+		} else if strings.Contains(urlStr, ".png") {
 			ext = ".png"
 		}
 
@@ -91,22 +93,33 @@ func downloadAndGetImgMarkdown(postTitle string, outputDir string, urls []string
 			continue
 		}
 
-		slog.Debug("Downloading image", "url", url, "dest", localFilePath)
+		slog.Debug("Downloading image", "url", urlStr, "dest", localFilePath)
 
 		// 增加 60 秒下载超时
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
-		// 下载图片
-		err := requests.URL(url).
-			Header("User-Agent", fantia.ChromeUserAgent).
-			ToFile(localFilePath).
-			Fetch(ctx)
+		rb := requests.URL(urlStr).
+			Header("User-Agent", fantia.ChromeUserAgent)
 
+		// 设置代理
+		if cfg.ProxyUrl != "" {
+			proxy, err := url.Parse(cfg.ProxyUrl)
+			if err != nil {
+				slog.Error("Invalid proxy URL", "url", cfg.ProxyUrl, "error", err)
+			} else {
+				rb.Transport(&http.Transport{
+					Proxy: http.ProxyURL(proxy),
+				})
+			}
+		}
+
+		// 下载图片
+		err := rb.ToFile(localFilePath).Fetch(ctx)
 
 		if err != nil {
-			slog.Error("Download failed", "url", url, "error", err)
-			mdRefs = append(mdRefs, fmt.Sprintf("![image](%s) (Download Failed)", url))
+			slog.Error("Download failed", "url", urlStr, "error", err)
+			mdRefs = append(mdRefs, fmt.Sprintf("![image](%s) (Download Failed)", urlStr))
 			continue
 		}
 

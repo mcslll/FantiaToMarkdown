@@ -22,7 +22,7 @@ func GetMaxPage(cfg *config.Config, fanclubID string, tag string, cookieString s
 		apiUrl += "?tag=" + url.QueryEscape(tag)
 	}
 
-	body, err := NewRequestGet(cfg.Host, apiUrl, cookieString)
+	body, err := NewRequestGet(cfg, apiUrl, cookieString)
 	if err != nil {
 		return 1, "", err
 	}
@@ -78,7 +78,7 @@ func CollectPostsFromPage(cfg *config.Config, fanclubID string, page int, tag st
 		apiUrl += "&tag=" + url.QueryEscape(tag)
 	}
 
-	body, err := NewRequestGet(cfg.Host, apiUrl, cookieString)
+	body, err := NewRequestGet(cfg, apiUrl, cookieString)
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +121,7 @@ func GetPostContent(cfg *config.Config, postUrl string, cookieString string, csr
 		"Referer":          postUrl,
 	}
 
-	body, err := NewRequestGet(cfg.Host, apiUrl, cookieString, extraHeaders)
+	body, err := NewRequestGet(cfg, apiUrl, cookieString, extraHeaders)
 	if err != nil {
 		return Post{}, err
 	}
