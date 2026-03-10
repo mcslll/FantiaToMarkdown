@@ -69,15 +69,15 @@ func GetPosts(cfg *config.Config, fanclubID string, tag string, cookieString str
 				postID = m[1]
 			}
 
-			// 快速检查：如果已有该 ID 开头的 md 文件，则跳过
+			// 快速检查：如果已有符合新格式（ID_日期_标题.md）的文件，则跳过
 			exists := false
+			// 匹配格式: ID_YYYY-MM-DD_HH_mm_ss_
+			reNewFormat := regexp.MustCompile(fmt.Sprintf(`^%s_\d{4}-\d{2}-\d{2}_\d{2}_\d{2}_\d{2}_`, postID))
+			
 			files, _ := os.ReadDir(outputDir)
 			for _, f := range files {
-				if !f.IsDir() && strings.HasPrefix(f.Name(), postID+"_") && strings.HasSuffix(f.Name(), ".md") {
-					// 检查是否是旧格式 [postID]_[title].md (即第二个下划线位置)
-					// 如果文件名中只包含两个下划线且中间不是日期格式，可能需要清理，但为了简单，
-					// 我们只要有 ID 开头就认为已存在。
-					slog.Debug("Post already exists (ID match), skipping", "id", postID, "file", f.Name())
+				if !f.IsDir() && reNewFormat.MatchString(f.Name()) && strings.HasSuffix(f.Name(), ".md") {
+					slog.Debug("Post already exists (New format match), skipping", "id", postID, "file", f.Name())
 					exists = true
 					break
 				}
