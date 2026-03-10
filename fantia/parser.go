@@ -15,8 +15,8 @@ import (
 	"golang.org/x/exp/slog"
 )
 
-// GetMaxPage 获取 Fanclub 的最大页数并提取 CSRF Token
-func GetMaxPage(cfg *config.Config, fanclubID string, tag string, cookieString string) (int, string, error) {
+// GetMaxPage 获取 Fanclub 的最大页数、提取 CSRF Token 并获取 Fanclub 名称
+func GetMaxPage(cfg *config.Config, fanclubID string, tag string, cookieString string) (int, string, string, error) {
 	apiUrl := fmt.Sprintf("%s/fanclubs/%s/posts", cfg.HostUrl, fanclubID)
 	if tag != "" {
 		apiUrl += "?tag=" + url.QueryEscape(tag)
@@ -24,24 +24,33 @@ func GetMaxPage(cfg *config.Config, fanclubID string, tag string, cookieString s
 
 	body, err := NewRequestGet(cfg, apiUrl, cookieString)
 	if err != nil {
-		return 1, "", err
+		return 1, "", "", err
 	}
 
 	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(body))
 	if err != nil {
-		return 1, "", err
+		return 1, "", "", err
 	}
 
-	// 提取 CSRF Token
+	// 1. 提取 CSRF Token
 	csrfToken, _ := doc.Find("meta[name='csrf-token']").Attr("content")
 	if csrfToken == "" {
 		slog.Warn("CSRF token not found in page metadata")
 	}
 
+	// 2. 提取 Fanclub 名称
+	fanclubName := doc.Find("h1.fanclub-name").Text()
+	fanclubName = strings.TrimSpace(fanclubName)
+	if fanclubName == "" {
+		// 备选选择器
+		fanclubName = doc.Find(".fanclub-header h1").Text()
+		fanclubName = strings.TrimSpace(fanclubName)
+	}
+
 	maxPage := 1
 	re := regexp.MustCompile(`page=(\d+)`)
 
-	// 尝试寻找 fa-angle-double-right
+	// 3. 尝试寻找最大页数
 	doc.Find("i.fa-angle-double-right").Each(func(i int, s *goquery.Selection) {
 		parent := s.Parent()
 		if parent.Is("a.page-link") {
@@ -68,7 +77,7 @@ func GetMaxPage(cfg *config.Config, fanclubID string, tag string, cookieString s
 		}
 	})
 
-	return maxPage, csrfToken, nil
+	return maxPage, csrfToken, fanclubName, nil
 }
 
 // CollectPostsFromPage 抓取指定页面的帖子列表

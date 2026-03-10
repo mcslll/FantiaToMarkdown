@@ -27,7 +27,7 @@ func TestGetMaxPageAndCSRF(t *testing.T) {
 	defer server.Close()
 
 	cfg := &config.Config{HostUrl: server.URL, Host: "localhost"}
-	maxPage, csrf, err := GetMaxPage(cfg, "1", "", "")
+	maxPage, csrf, _, err := GetMaxPage(cfg, "1", "", "")
 	if err != nil {
 		t.Fatalf("GetMaxPage failed: %v", err)
 	}

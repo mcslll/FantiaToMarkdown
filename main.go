@@ -33,21 +33,22 @@ var (
 
 // GetPosts 调度抓取逻辑：列表 -> 详情 -> 转换 -> 保存
 func GetPosts(cfg *config.Config, fanclubID string, tag string, cookieString string) error {
-	maxPage, csrfToken, err := fantia.GetMaxPage(cfg, fanclubID, tag, cookieString)
+	maxPage, csrfToken, fanclubName, err := fantia.GetMaxPage(cfg, fanclubID, tag, cookieString)
 	if err != nil {
 		return err
 	}
-	slog.Info("Detected Max Page", "maxPage", maxPage, "tag", tag)
+	slog.Info("Detected Fanclub", "name", fanclubName, "maxPage", maxPage, "tag", tag)
 	if csrfToken != "" {
 		slog.Debug("CSRF token extracted", "token", csrfToken)
 	}
 
-	// 创建存储目录
-	outputDir := filepath.Join(cfg.DataDir, fanclubID)
-	if tag != "" {
-		// 如果指定了标签，将内容存放在标签子目录下，或者根据需求决定是否分文件夹
-		// 这里暂定还是放在同一个目录下，但文件名会保留唯一性
+	// 创建存储目录：优先使用名称，若获取不到则使用 ID
+	dirName := fanclubID
+	if fanclubName != "" {
+		dirName = utils.ToSafeFilename(fanclubName)
 	}
+	outputDir := filepath.Join(cfg.DataDir, dirName)
+
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
