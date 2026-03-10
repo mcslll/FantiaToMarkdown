@@ -28,13 +28,13 @@ func TestSavePost(t *testing.T) {
 	converter := md.NewConverter("", true, nil)
 
 	// 测试保存功能
-	err = SavePost(cfg, post, tmpDir, converter)
+	err = SavePost(cfg, post, "123", tmpDir, converter)
 	if err != nil {
 		t.Errorf("SavePost failed: %v", err)
 	}
 
-	// 验证文件是否存在
-	expectedFile := filepath.Join(tmpDir, "TestPost.md")
+	// 验证文件是否存在 (现在是 123_TestPost.md)
+	expectedFile := filepath.Join(tmpDir, "123_TestPost.md")
 	if _, err := os.Stat(expectedFile); os.IsNotExist(err) {
 		t.Errorf("Expected file %s was not created", expectedFile)
 	}

@@ -19,8 +19,8 @@ import (
 const ImgDir = ".assets"
 
 // SavePost 保存帖子到本地，包括图片下载
-func SavePost(cfg *config.Config, post fantia.Post, outputDir string, converter *md.Converter) error {
-	filePath := filepath.Join(outputDir, post.Title+".md")
+func SavePost(cfg *config.Config, post fantia.Post, fileName string, outputDir string, converter *md.Converter) error {
+	filePath := filepath.Join(outputDir, fileName)
 
 	// 1. 转换正文 HTML 为 Markdown
 	markdown, err := converter.ConvertString(post.Content)
@@ -36,13 +36,27 @@ func SavePost(cfg *config.Config, post fantia.Post, outputDir string, converter 
 	}
 
 	// 3. 组装最终内容
-	header := fmt.Sprintf("# %s\n\nURL: %s\n\n---\n\n", post.Title, post.Url)
-	finalContent := header + markdown
-	if picMarkdown != "" {
-		finalContent += "\n\n### 图片附件\n\n" + picMarkdown
+	tagsStr := ""
+	if len(post.Tags) > 0 {
+		tagsStr = fmt.Sprintf("\nTags: %s", strings.Join(post.Tags, ", "))
 	}
 
+	// 格式化日期
+	displayDate := post.PostedAt
+	if t, err := time.Parse(time.RFC1123Z, post.PostedAt); err == nil {
+		displayDate = t.Format("2006-01-02 15:04:05")
+	}
+
+	header := fmt.Sprintf("# %s\n\nURL: %s\nDate: %s%s\n\n---\n\n", post.Title, post.Url, displayDate, tagsStr)
+	
+	finalContent := header
+	if picMarkdown != "" {
+		finalContent += picMarkdown + "\n\n---\n\n"
+	}
+	finalContent += markdown
+
 	// 4. 写入文件
+	slog.Info("Saving markdown file", "path", filePath)
 	return os.WriteFile(filePath, []byte(finalContent), 0644)
 }
 

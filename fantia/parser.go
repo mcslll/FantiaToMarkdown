@@ -5,6 +5,7 @@ import (
 	"FantiaToMarkdown/utils"
 	"bytes"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -15,8 +16,12 @@ import (
 )
 
 // GetMaxPage 获取 Fanclub 的最大页数并提取 CSRF Token
-func GetMaxPage(cfg *config.Config, fanclubID string, cookieString string) (int, string, error) {
+func GetMaxPage(cfg *config.Config, fanclubID string, tag string, cookieString string) (int, string, error) {
 	apiUrl := fmt.Sprintf("%s/fanclubs/%s/posts", cfg.HostUrl, fanclubID)
+	if tag != "" {
+		apiUrl += "?tag=" + url.QueryEscape(tag)
+	}
+
 	body, err := NewRequestGet(cfg.Host, apiUrl, cookieString)
 	if err != nil {
 		return 1, "", err
@@ -67,8 +72,12 @@ func GetMaxPage(cfg *config.Config, fanclubID string, cookieString string) (int,
 }
 
 // CollectPostsFromPage 抓取指定页面的帖子列表
-func CollectPostsFromPage(cfg *config.Config, fanclubID string, page int, cookieString string) ([]Post, error) {
+func CollectPostsFromPage(cfg *config.Config, fanclubID string, page int, tag string, cookieString string) ([]Post, error) {
 	apiUrl := fmt.Sprintf("%s/fanclubs/%s/posts?page=%d", cfg.HostUrl, fanclubID, page)
+	if tag != "" {
+		apiUrl += "&tag=" + url.QueryEscape(tag)
+	}
+
 	body, err := NewRequestGet(cfg.Host, apiUrl, cookieString)
 	if err != nil {
 		return nil, err
@@ -95,12 +104,12 @@ func CollectPostsFromPage(cfg *config.Config, fanclubID string, page int, cookie
 	return posts, nil
 }
 
-// GetPostContent 从 Fantia API 获取帖子的详情和图片
-func GetPostContent(cfg *config.Config, postUrl string, cookieString string, csrfToken string) (string, []string, error) {
+// GetPostContent 从 Fantia API 获取帖子的详情（含日期和标签）
+func GetPostContent(cfg *config.Config, postUrl string, cookieString string, csrfToken string) (Post, error) {
 	re := regexp.MustCompile(`/posts/(\d+)`)
 	matches := re.FindStringSubmatch(postUrl)
 	if len(matches) < 2 {
-		return "", nil, fmt.Errorf("failed to parse post ID: %s", postUrl)
+		return Post{}, fmt.Errorf("failed to parse post ID: %s", postUrl)
 	}
 	postID := matches[1]
 
@@ -114,35 +123,42 @@ func GetPostContent(cfg *config.Config, postUrl string, cookieString string, csr
 
 	body, err := NewRequestGet(cfg.Host, apiUrl, cookieString, extraHeaders)
 	if err != nil {
-		return "", nil, err
+		return Post{}, err
 	}
 
 	jsonData := gjson.ParseBytes(body)
 	postJson := jsonData.Get("post")
 	if !postJson.Exists() {
-		return "", nil, fmt.Errorf("API response invalid for post %s", postID)
+		return Post{}, fmt.Errorf("API response invalid for post %s", postID)
 	}
 
-	// 1. 提取文本内容
+	// 1. 提取基本信息
+	title := postJson.Get("title").String()
+	postedAt := postJson.Get("posted_at").String()
+
+	// 2. 提取文本内容
 	contentHtml := postJson.Get("comment").String()
 	if contentHtml == "" {
 		contentHtml = postJson.Get("description").String()
 	}
 
-	var pictures []string
+	// 3. 提取标签
+	var tags []string
+	postJson.Get("tags").ForEach(func(key, value gjson.Result) bool {
+		tags = append(tags, value.Get("name").String())
+		return true
+	})
 
-	// 2. 提取封面图 (thumb)
+	// 4. 提取图片列表
+	var pictures []string
 	if thumb := postJson.Get("thumb.original"); thumb.Exists() {
 		pictures = append(pictures, thumb.String())
 	} else if thumb := postJson.Get("thumb.main"); thumb.Exists() {
 		pictures = append(pictures, thumb.String())
 	}
 
-	// 3. 提取内容区块中的图片 (photo_gallery 类型)
 	postJson.Get("post_contents").ForEach(func(key, value gjson.Result) bool {
-		// 遍历照片数组
 		value.Get("post_content_photos").ForEach(func(k, v gjson.Result) bool {
-			// 优先取原图地址
 			imgUrl := ""
 			if original := v.Get("url.original"); original.Exists() {
 				imgUrl = original.String()
@@ -151,14 +167,12 @@ func GetPostContent(cfg *config.Config, postUrl string, cookieString string, csr
 			} else {
 				imgUrl = v.Get("url.main").String()
 			}
-
 			if imgUrl != "" {
 				pictures = append(pictures, imgUrl)
 			}
 			return true
 		})
 
-		// 4. 处理 Blog 类型的嵌套图片 (Quill Delta 格式)
 		commentStr := value.Get("comment").String()
 		if strings.HasPrefix(commentStr, "{\"ops\":") {
 			opsJson := gjson.Parse(commentStr)
@@ -169,13 +183,19 @@ func GetPostContent(cfg *config.Config, postUrl string, cookieString string, csr
 				return true
 			})
 		}
-		
 		return true
 	})
 
-	// 去重图片列表
 	pictures = utils.UniqueStrings(pictures)
 
-	slog.Debug("Post parsing completed via API", "id", postID, "imagesCount", len(pictures))
-	return contentHtml, pictures, nil
+	slog.Debug("Post parsing completed via API", "id", postID, "imagesCount", len(pictures), "tags", tags)
+
+	return Post{
+		Title:    utils.ToSafeFilename(title),
+		Url:      postUrl,
+		Content:  contentHtml,
+		Pictures: pictures,
+		PostedAt: postedAt,
+		Tags:     tags,
+	}, nil
 }

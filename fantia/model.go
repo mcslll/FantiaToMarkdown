@@ -4,8 +4,10 @@ package fantia
 type Post struct {
 	Title    string   `json:"title"`
 	Url      string   `json:"url"`
-	Content  string   `json:"content"`  // HTML 内容
-	Pictures []string `json:"pictures"` // 图片 URL 列表
+	Content  string   `json:"content"`   // HTML 内容
+	Pictures []string `json:"pictures"`  // 图片 URL 列表
+	PostedAt string   `json:"posted_at"` // 发布日期
+	Tags     []string `json:"tags"`      // 标签列表
 }
 
 // Cookie 结构体用于解析 cookies.json
