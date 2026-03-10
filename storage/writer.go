@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	md "github.com/JohannesKaufmann/html-to-markdown"
@@ -72,61 +73,68 @@ func downloadAndGetImgMarkdown(cfg *config.Config, postTitle string, outputDir s
 		return "", err
 	}
 
-	var mdRefs []string
+	mdRefs := make([]string, len(urls))
+	var wg sync.WaitGroup
+
 	for i, urlStr := range urls {
-		// 确定后缀名
-		ext := ".jpg"
-		if strings.Contains(urlStr, ".webp") {
-			ext = ".webp"
-		} else if strings.Contains(urlStr, ".png") {
-			ext = ".png"
-		}
-
-		fileName := fmt.Sprintf("%s_%d%s", utils.ToSafeFilename(postTitle), i, ext)
-		localFilePath := filepath.Join(assetsDir, fileName)
-
-		// 检查图片是否已存在，存在则跳过下载
-		if _, err := os.Stat(localFilePath); err == nil {
-			slog.Debug("Image already exists, skipping download", "path", localFilePath)
-			relPath := filepath.Join(ImgDir, fileName)
-			mdRefs = append(mdRefs, fmt.Sprintf("![image](%s)", relPath))
-			continue
-		}
-
-		slog.Debug("Downloading image", "url", urlStr, "dest", localFilePath)
-
-		// 增加 60 秒下载超时
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancel()
-
-		rb := requests.URL(urlStr).
-			Header("User-Agent", fantia.ChromeUserAgent)
-
-		// 设置代理
-		if cfg.ProxyUrl != "" {
-			proxy, err := url.Parse(cfg.ProxyUrl)
-			if err != nil {
-				slog.Error("Invalid proxy URL", "url", cfg.ProxyUrl, "error", err)
-			} else {
-				rb.Transport(&http.Transport{
-					Proxy: http.ProxyURL(proxy),
-				})
+		wg.Add(1)
+		go func(i int, urlStr string) {
+			defer wg.Done()
+			// 确定后缀名
+			ext := ".jpg"
+			if strings.Contains(urlStr, ".webp") {
+				ext = ".webp"
+			} else if strings.Contains(urlStr, ".png") {
+				ext = ".png"
 			}
-		}
 
-		// 下载图片
-		err := rb.ToFile(localFilePath).Fetch(ctx)
+			fileName := fmt.Sprintf("%s_%d%s", utils.ToSafeFilename(postTitle), i, ext)
+			localFilePath := filepath.Join(assetsDir, fileName)
 
-		if err != nil {
-			slog.Error("Download failed", "url", urlStr, "error", err)
-			mdRefs = append(mdRefs, fmt.Sprintf("![image](%s) (Download Failed)", urlStr))
-			continue
-		}
+			// 检查图片是否已存在，存在则跳过下载
+			if _, err := os.Stat(localFilePath); err == nil {
+				slog.Debug("Image already exists, skipping download", "path", localFilePath)
+				relPath := filepath.Join(ImgDir, fileName)
+				mdRefs[i] = fmt.Sprintf("![image](%s)", relPath)
+				return
+			}
 
-		// 使用相对路径引用
-		relPath := filepath.Join(ImgDir, fileName)
-		mdRefs = append(mdRefs, fmt.Sprintf("![image](%s)", relPath))
+			slog.Debug("Downloading image", "url", urlStr, "dest", localFilePath)
+
+			// 增加 60 秒下载超时
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+
+			rb := requests.URL(urlStr).
+				Header("User-Agent", fantia.ChromeUserAgent)
+
+			// 设置代理
+			if cfg.ProxyUrl != "" {
+				proxy, err := url.Parse(cfg.ProxyUrl)
+				if err != nil {
+					slog.Error("Invalid proxy URL", "url", cfg.ProxyUrl, "error", err)
+				} else {
+					rb.Transport(&http.Transport{
+						Proxy: http.ProxyURL(proxy),
+					})
+				}
+			}
+
+			// 下载图片
+			err := rb.ToFile(localFilePath).Fetch(ctx)
+
+			if err != nil {
+				slog.Error("Download failed", "url", urlStr, "error", err)
+				mdRefs[i] = fmt.Sprintf("![image](%s) (Download Failed)", urlStr)
+				return
+			}
+
+			// 使用相对路径引用
+			relPath := filepath.Join(ImgDir, fileName)
+			mdRefs[i] = fmt.Sprintf("![image](%s)", relPath)
+		}(i, urlStr)
 	}
 
+	wg.Wait()
 	return strings.Join(mdRefs, "\n\n"), nil
 }
