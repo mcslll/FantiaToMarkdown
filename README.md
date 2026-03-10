@@ -73,6 +73,10 @@ $ .\FantiaToMarkdown.exe -h
 4. **图片去重**：如果图片文件已存在则跳过下载。
 5. **改进 Markdown 格式**：优化了标题和内容的转换效果。
 
+### 参考
+
+- [Fantia API Integration](https://deepwiki.com/suzumiyahifumi/Fantia-Downloader-tampermonkey/6-fantia-api-integration)
+
 ---
 
 基于 [AfdianToMarkdown](https://github.com/PhiFever/AfdianToMarkdown) 的设计思路开发。
