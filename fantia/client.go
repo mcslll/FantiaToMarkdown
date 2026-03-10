@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/carlmjohnson/requests"
 )
@@ -57,22 +58,34 @@ func GetCookies(cookiePath string) (string, error) {
 }
 
 // buildFantiaHeaders 构建 Fantia 专用的请求头
-func buildFantiaHeaders(host string, cookieString string) http.Header {
-	return http.Header{
+func buildFantiaHeaders(cookieString string, extraHeaders map[string]string) http.Header {
+	h := http.Header{
 		"User-Agent": {ChromeUserAgent},
 		"Cookie":     {cookieString},
-		"Host":       {host},
+		"Accept":     {"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"},
 	}
+	for k, v := range extraHeaders {
+		h.Set(k, v)
+	}
+	return h
 }
 
 // NewRequestGet 发送 GET 请求并返回响应字节
-func NewRequestGet(host string, url string, cookieString string) ([]byte, error) {
+func NewRequestGet(host string, url string, cookieString string, extraHeaders ...map[string]string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var extra map[string]string
+	if len(extraHeaders) > 0 {
+		extra = extraHeaders[0]
+	}
+
 	var body bytes.Buffer
 	err := requests.
 		URL(url).
-		Headers(buildFantiaHeaders(host, cookieString)).
+		Headers(buildFantiaHeaders(cookieString, extra)).
 		ToBytesBuffer(&body).
-		Fetch(context.Background())
+		Fetch(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("GET %s failed: %w", url, err)
 	}

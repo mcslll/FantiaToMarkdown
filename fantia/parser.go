@@ -5,29 +5,32 @@ import (
 	"FantiaToMarkdown/utils"
 	"bytes"
 	"fmt"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
-	md "github.com/JohannesKaufmann/html-to-markdown"
 	"github.com/PuerkitoBio/goquery"
+	"github.com/tidwall/gjson"
 	"golang.org/x/exp/slog"
 )
 
-// GetMaxPage 获取 Fanclub 的最大页数
-func GetMaxPage(cfg *config.Config, fanclubID string, cookieString string) (int, error) {
+// GetMaxPage 获取 Fanclub 的最大页数并提取 CSRF Token
+func GetMaxPage(cfg *config.Config, fanclubID string, cookieString string) (int, string, error) {
 	apiUrl := fmt.Sprintf("%s/fanclubs/%s/posts", cfg.HostUrl, fanclubID)
 	body, err := NewRequestGet(cfg.Host, apiUrl, cookieString)
 	if err != nil {
-		return 1, err
+		return 1, "", err
 	}
 
 	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(body))
 	if err != nil {
-		return 1, err
+		return 1, "", err
+	}
+
+	// 提取 CSRF Token
+	csrfToken, _ := doc.Find("meta[name='csrf-token']").Attr("content")
+	if csrfToken == "" {
+		slog.Warn("CSRF token not found in page metadata")
 	}
 
 	maxPage := 1
@@ -60,7 +63,7 @@ func GetMaxPage(cfg *config.Config, fanclubID string, cookieString string) (int,
 		}
 	})
 
-	return maxPage, nil
+	return maxPage, csrfToken, nil
 }
 
 // CollectPostsFromPage 抓取指定页面的帖子列表
@@ -92,83 +95,87 @@ func CollectPostsFromPage(cfg *config.Config, fanclubID string, page int, cookie
 	return posts, nil
 }
 
-// GetPostContent 获取帖子的正文详情 HTML
-func GetPostContent(cfg *config.Config, postUrl string, cookieString string) (string, error) {
-	body, err := NewRequestGet(cfg.Host, postUrl, cookieString)
+// GetPostContent 从 Fantia API 获取帖子的详情和图片
+func GetPostContent(cfg *config.Config, postUrl string, cookieString string, csrfToken string) (string, []string, error) {
+	re := regexp.MustCompile(`/posts/(\d+)`)
+	matches := re.FindStringSubmatch(postUrl)
+	if len(matches) < 2 {
+		return "", nil, fmt.Errorf("failed to parse post ID: %s", postUrl)
+	}
+	postID := matches[1]
+
+	apiUrl := fmt.Sprintf("%s/api/v1/posts/%s", cfg.HostUrl, postID)
+
+	extraHeaders := map[string]string{
+		"X-Requested-With": "XMLHttpRequest",
+		"X-CSRF-Token":     csrfToken,
+		"Referer":          postUrl,
+	}
+
+	body, err := NewRequestGet(cfg.Host, apiUrl, cookieString, extraHeaders)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 
-	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(body))
-	if err != nil {
-		return "", err
+	jsonData := gjson.ParseBytes(body)
+	postJson := jsonData.Get("post")
+	if !postJson.Exists() {
+		return "", nil, fmt.Errorf("API response invalid for post %s", postID)
 	}
 
-	// 提取正文内容
-	contentHtml, err := doc.Find(".post-content, .post-body, .post-description").Html()
-	if err != nil {
-		return "", fmt.Errorf("failed to find post content: %w", err)
+	// 1. 提取文本内容
+	contentHtml := postJson.Get("comment").String()
+	if contentHtml == "" {
+		contentHtml = postJson.Get("description").String()
 	}
 
-	return contentHtml, nil
-}
+	var pictures []string
 
-// GetPosts 调度抓取逻辑：列表 -> 详情 -> 转换 -> 保存
-func GetPosts(cfg *config.Config, fanclubID string, cookieString string) error {
-	maxPage, err := GetMaxPage(cfg, fanclubID, cookieString)
-	if err != nil {
-		return err
-	}
-	slog.Info("Detected Max Page", "maxPage", maxPage)
-
-	// 创建存储目录
-	outputDir := filepath.Join(cfg.DataDir, fanclubID)
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		return fmt.Errorf("failed to create output directory: %w", err)
+	// 2. 提取封面图 (thumb)
+	if thumb := postJson.Get("thumb.original"); thumb.Exists() {
+		pictures = append(pictures, thumb.String())
+	} else if thumb := postJson.Get("thumb.main"); thumb.Exists() {
+		pictures = append(pictures, thumb.String())
 	}
 
-	converter := md.NewConverter("", true, nil)
+	// 3. 提取内容区块中的图片 (photo_gallery 类型)
+	postJson.Get("post_contents").ForEach(func(key, value gjson.Result) bool {
+		// 遍历照片数组
+		value.Get("post_content_photos").ForEach(func(k, v gjson.Result) bool {
+			// 优先取原图地址
+			imgUrl := ""
+			if original := v.Get("url.original"); original.Exists() {
+				imgUrl = original.String()
+			} else if webp := v.Get("url.main_webp"); webp.Exists() {
+				imgUrl = webp.String()
+			} else {
+				imgUrl = v.Get("url.main").String()
+			}
 
-	for page := 1; page <= maxPage; page++ {
-		slog.Info("Fetching page", "page", page)
-		posts, err := CollectPostsFromPage(cfg, fanclubID, page, cookieString)
-		if err != nil {
-			slog.Error("Failed to fetch page", "page", page, "error", err)
-			continue
+			if imgUrl != "" {
+				pictures = append(pictures, imgUrl)
+			}
+			return true
+		})
+
+		// 4. 处理 Blog 类型的嵌套图片 (Quill Delta 格式)
+		commentStr := value.Get("comment").String()
+		if strings.HasPrefix(commentStr, "{\"ops\":") {
+			opsJson := gjson.Parse(commentStr)
+			opsJson.Get("ops").ForEach(func(k, v gjson.Result) bool {
+				if img := v.Get("insert.fantiaImage.original_url"); img.Exists() {
+					pictures = append(pictures, img.String())
+				}
+				return true
+			})
 		}
+		
+		return true
+	})
 
-		for _, post := range posts {
-			filePath := filepath.Join(outputDir, post.Title+".md")
-			// 如果文件已存在则跳过
-			if _, err := os.Stat(filePath); err == nil {
-				slog.Debug("Post already exists, skipping", "title", post.Title)
-				continue
-			}
+	// 去重图片列表
+	pictures = utils.UniqueStrings(pictures)
 
-			slog.Info("Downloading post", "title", post.Title)
-			htmlContent, err := GetPostContent(cfg, post.Url, cookieString)
-			if err != nil {
-				slog.Error("Failed to get post content", "url", post.Url, "error", err)
-				continue
-			}
-
-			markdown, err := converter.ConvertString(htmlContent)
-			if err != nil {
-				slog.Error("Failed to convert HTML to Markdown", "title", post.Title, "error", err)
-				markdown = htmlContent // 降级保存 HTML
-			}
-
-			// 写入文件
-			header := fmt.Sprintf("# %s\n\nURL: %s\n\n---\n\n", post.Title, post.Url)
-			if err := os.WriteFile(filePath, []byte(header+markdown), 0644); err != nil {
-				slog.Error("Failed to save file", "file", filePath, "error", err)
-			}
-
-			time.Sleep(time.Duration(DelayMs) * time.Millisecond)
-		}
-
-		time.Sleep(time.Duration(DelayMs) * time.Millisecond)
-	}
-
-	return nil
+	slog.Debug("Post parsing completed via API", "id", postID, "imagesCount", len(pictures))
+	return contentHtml, pictures, nil
 }

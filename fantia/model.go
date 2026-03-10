@@ -1,24 +1,15 @@
 package fantia
 
-import "time"
-
-type Cookie struct {
-	Name     string `json:"name"`
-	Value    string `json:"value"`
-	Domain   string `json:"domain"`
-	Path     string `json:"path"`
-	Expires  float64 `json:"expires"`
-	HttpOnly bool   `json:"httpOnly"`
-	Secure   bool   `json:"secure"`
-}
-
+// Post 表示帖子的基本信息和内容
 type Post struct {
-	Title       string
-	Url         string
-	PublishTime time.Time
+	Title    string   `json:"title"`
+	Url      string   `json:"url"`
+	Content  string   `json:"content"`  // HTML 内容
+	Pictures []string `json:"pictures"` // 图片 URL 列表
 }
 
-type Fanclub struct {
-	ID   string
-	Name string
+// Cookie 结构体用于解析 cookies.json
+type Cookie struct {
+	Name  string `json:"name"  binding:"required"`
+	Value string `json:"value" binding:"required"`
 }

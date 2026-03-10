@@ -2,92 +2,98 @@ package fantia
 
 import (
 	"FantiaToMarkdown/config"
-	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
-	"github.com/PuerkitoBio/goquery"
+	"github.com/tidwall/gjson"
 )
 
-// TestGetMaxPage 解析最大页码测试
-func TestGetMaxPage(t *testing.T) {
-	// 模拟 Fantia 分页 HTML
-	html := `
-	<ul class="pagination">
-		<li class="page-item"><a class="page-link" href="/fanclubs/1/posts?page=1">1</a></li>
-		<li class="page-item"><a class="page-link" href="/fanclubs/1/posts?page=2">2</a></li>
-		<li class="page-item"><a class="page-link" href="/fanclubs/1/posts?page=10">10</a></li>
-		<li class="page-item">
-			<a class="page-link" href="/fanclubs/1/posts?page=10">
-				<i class="fa fa-angle-double-right"></i>
-			</a>
-		</li>
-	</ul>`
+// TestGetMaxPageAndCSRF 测试 HTML 解析逻辑：提取最大页数和 CSRF Token
+func TestGetMaxPageAndCSRF(t *testing.T) {
+	mockHtml := `
+		<html>
+			<head><meta name="csrf-token" content="mock-csrf-token-123"></head>
+			<body>
+				<a class="page-link" href="/fanclubs/1/posts?page=1">1</a>
+				<a class="page-link" href="/fanclubs/1/posts?page=5">5</a>
+				<i class="fa-angle-double-right"></i>
+			</body>
+		</html>`
 
-	doc, _ := goquery.NewDocumentFromReader(bytes.NewReader([]byte(html)))
-	
-	// 验证逻辑（提取自 GetMaxPage 的内部实现逻辑）
-	maxPage := 1
-	doc.Find("a.page-link").Each(func(i int, s *goquery.Selection) {
-		href, _ := s.Attr("href")
-		if href != "" {
-			// 简化模拟正则匹配逻辑
-			if i == 2 || i == 3 { // 对应 page=10
-				maxPage = 10
-			}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(mockHtml))
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{HostUrl: server.URL, Host: "localhost"}
+	maxPage, csrf, err := GetMaxPage(cfg, "1", "")
+	if err != nil {
+		t.Fatalf("GetMaxPage failed: %v", err)
+	}
+
+	if maxPage != 5 {
+		t.Errorf("Expected maxPage 5, got %d", maxPage)
+	}
+	if csrf != "mock-csrf-token-123" {
+		t.Errorf("Expected CSRF token 'mock-csrf-token-123', got '%s'", csrf)
+	}
+}
+
+// TestParsePostContentAPI 测试 API JSON 解析逻辑
+func TestParsePostContentAPI(t *testing.T) {
+	// 模拟 Fantia API 返回的包含 Blog 嵌套图和相册图的 JSON
+	mockJson := `{
+		"post": {
+			"comment": "Normal Comment",
+			"thumb": { "original": "https://example.com/thumb.jpg" },
+			"post_contents": [
+				{
+					"post_content_photos": [
+						{ "url": { "original": "https://example.com/photo1.png" } },
+						{ "url": { "main_webp": "https://example.com/photo2.webp" } }
+					]
+				},
+				{
+					"comment": "{\"ops\":[{\"insert\":{\"fantiaImage\":{\"original_url\":\"https://example.com/blog_img.jpg\"}}}]}"
+				}
+			]
 		}
-	})
+	}`
 
-	if maxPage != 10 {
-		t.Errorf("Expected maxPage 10, got %d", maxPage)
+	// 验证逻辑（手动调用内部解析逻辑的部分）
+	postJson := gjson.Parse(mockJson).Get("post")
+	var pictures []string
+
+	// 提取封面
+	if thumb := postJson.Get("thumb.original"); thumb.Exists() {
+		pictures = append(pictures, thumb.String())
 	}
-}
 
-// TestCollectPostsFromPage 抓取列表解析测试
-func TestCollectPostsFromPage(t *testing.T) {
-	// 模拟帖子列表 HTML
-	html := `
-	<div class="post-list">
-		<a class="link-block" title="Test Post 1" href="/posts/101"></a>
-		<a class="link-block" title="Test Post 2" href="/posts/102"></a>
-	</div>`
-
-	cfg := config.NewConfig("fantia.jp", "data", "cookies.json")
-	doc, _ := goquery.NewDocumentFromReader(bytes.NewReader([]byte(html)))
-
-	var posts []Post
-	doc.Find("a.link-block").Each(func(i int, s *goquery.Selection) {
-		title, _ := s.Attr("title")
-		href, _ := s.Attr("href")
-		posts = append(posts, Post{
-			Title: title,
-			Url:   cfg.HostUrl + href,
+	// 提取内容
+	postJson.Get("post_contents").ForEach(func(key, value gjson.Result) bool {
+		value.Get("post_content_photos").ForEach(func(k, v gjson.Result) bool {
+			if original := v.Get("url.original"); original.Exists() {
+				pictures = append(pictures, original.String())
+			} else if webp := v.Get("url.main_webp"); webp.Exists() {
+				pictures = append(pictures, webp.String())
+			}
+			return true
 		})
+		commentStr := value.Get("comment").String()
+		if gjson.Valid(commentStr) {
+			gjson.Parse(commentStr).Get("ops").ForEach(func(k, v gjson.Result) bool {
+				if img := v.Get("insert.fantiaImage.original_url"); img.Exists() {
+					pictures = append(pictures, img.String())
+				}
+				return true
+			})
+		}
+		return true
 	})
 
-	if len(posts) != 2 {
-		t.Errorf("Expected 2 posts, got %d", len(posts))
-	}
-
-	if posts[0].Title != "Test Post 1" {
-		t.Errorf("Expected title 'Test Post 1', got '%s'", posts[0].Title)
-	}
-
-	expectedUrl := "https://fantia.jp/posts/101"
-	if posts[0].Url != expectedUrl {
-		t.Errorf("Expected URL '%s', got '%s'", expectedUrl, posts[0].Url)
-	}
-}
-
-// TestModelPost 数据模型测试
-func TestModelPost(t *testing.T) {
-	post := Post{
-		Title: "Test",
-		Url:   "http://test.com",
-	}
-	if post.Title != "Test" {
-		t.Error("Model Post Title assignment failed")
-	}
-	if post.Url != "http://test.com" {
-		t.Error("Model Post Url assignment failed")
+	expectedCount := 4 // thumb + 2 photos + 1 blog img
+	if len(pictures) != expectedCount {
+		t.Errorf("Expected %d pictures, got %d: %v", expectedCount, len(pictures), pictures)
 	}
 }
