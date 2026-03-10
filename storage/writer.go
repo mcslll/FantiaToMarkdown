@@ -22,7 +22,7 @@ import (
 const ImgDir = ".assets"
 
 // SavePost 保存帖子到本地，包括图片下载
-func SavePost(cfg *config.Config, post fantia.Post, fileName string, outputDir string, converter *md.Converter) error {
+func SavePost(cfg *config.Config, post fantia.Post, postID string, fileName string, outputDir string, converter *md.Converter) error {
 	filePath := filepath.Join(outputDir, fileName)
 
 	// 1. 转换正文 HTML 为 Markdown
@@ -33,7 +33,7 @@ func SavePost(cfg *config.Config, post fantia.Post, fileName string, outputDir s
 	}
 
 	// 2. 下载图片并获取本地引用路径
-	picMarkdown, err := downloadAndGetImgMarkdown(cfg, post.Title, outputDir, post.Pictures)
+	picMarkdown, err := downloadAndGetImgMarkdown(cfg, postID, post.Title, outputDir, post.Pictures)
 	if err != nil {
 		slog.Error("Failed to download images", "title", post.Title, "error", err)
 	}
@@ -59,11 +59,11 @@ func SavePost(cfg *config.Config, post fantia.Post, fileName string, outputDir s
 	finalContent += markdown
 
 	// 4. 写入文件
-	slog.Info("Saving markdown file", "path", filePath)
+	slog.Info("Saving", "path", filePath)
 	return os.WriteFile(filePath, []byte(finalContent), 0644)
 }
 
-func downloadAndGetImgMarkdown(cfg *config.Config, postTitle string, outputDir string, urls []string) (string, error) {
+func downloadAndGetImgMarkdown(cfg *config.Config, postID string, postTitle string, outputDir string, urls []string) (string, error) {
 	if len(urls) == 0 {
 		return "", nil
 	}
@@ -75,11 +75,16 @@ func downloadAndGetImgMarkdown(cfg *config.Config, postTitle string, outputDir s
 
 	mdRefs := make([]string, len(urls))
 	var wg sync.WaitGroup
+	// 限制并发：最多同时下载 5 张图片
+	sem := make(chan struct{}, 5)
 
 	for i, urlStr := range urls {
 		wg.Add(1)
 		go func(i int, urlStr string) {
 			defer wg.Done()
+			sem <- struct{}{}        // 获取信号量
+			defer func() { <-sem }() // 释放信号量
+
 			// 确定后缀名
 			ext := ".jpg"
 			if strings.Contains(urlStr, ".webp") {
@@ -88,43 +93,34 @@ func downloadAndGetImgMarkdown(cfg *config.Config, postTitle string, outputDir s
 				ext = ".png"
 			}
 
-			fileName := fmt.Sprintf("%s_%d%s", utils.ToSafeFilename(postTitle), i, ext)
+			// 使用 postID_Title_Index 格式以确保唯一性
+			fileName := fmt.Sprintf("%s_%s_%d%s", postID, utils.ToSafeFilename(postTitle), i, ext)
 			localFilePath := filepath.Join(assetsDir, fileName)
 
-			// 检查图片是否已存在，存在则跳过下载
+			// 检查图片是否已存在
 			if _, err := os.Stat(localFilePath); err == nil {
-				slog.Debug("Image already exists, skipping download", "path", localFilePath)
+				slog.Debug("Image exists, skip", "path", localFilePath)
 				relPath := filepath.Join(ImgDir, fileName)
 				mdRefs[i] = fmt.Sprintf("![image](%s)", relPath)
 				return
 			}
 
-			slog.Debug("Downloading image", "url", urlStr, "dest", localFilePath)
+			// 带有重试逻辑的下载
+			var err error
+			for retry := 0; retry < 3; retry++ {
+				if retry > 0 {
+					slog.Debug("Retrying image download", "url", urlStr, "attempt", retry+1)
+					time.Sleep(time.Second * time.Duration(retry)) // 退避重试
+				}
 
-			// 增加 60 秒下载超时
-			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-			defer cancel()
-
-			rb := requests.URL(urlStr).
-				Header("User-Agent", fantia.ChromeUserAgent)
-
-			// 设置代理
-			if cfg.ProxyUrl != "" {
-				proxy, err := url.Parse(cfg.ProxyUrl)
-				if err != nil {
-					slog.Error("Invalid proxy URL", "url", cfg.ProxyUrl, "error", err)
-				} else {
-					rb.Transport(&http.Transport{
-						Proxy: http.ProxyURL(proxy),
-					})
+				err = downloadToFile(cfg, urlStr, localFilePath)
+				if err == nil {
+					break
 				}
 			}
 
-			// 下载图片
-			err := rb.ToFile(localFilePath).Fetch(ctx)
-
 			if err != nil {
-				slog.Error("Download failed", "url", urlStr, "error", err)
+				slog.Error("Image download failed", "url", urlStr, "error", err)
 				mdRefs[i] = fmt.Sprintf("![image](%s) (Download Failed)", urlStr)
 				return
 			}
@@ -137,4 +133,25 @@ func downloadAndGetImgMarkdown(cfg *config.Config, postTitle string, outputDir s
 
 	wg.Wait()
 	return strings.Join(mdRefs, "\n\n"), nil
+}
+
+func downloadToFile(cfg *config.Config, urlStr string, destPath string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	rb := requests.URL(urlStr).
+		Header("User-Agent", fantia.ChromeUserAgent)
+
+	// 设置代理
+	if cfg.ProxyUrl != "" {
+		proxy, err := url.Parse(cfg.ProxyUrl)
+		if err != nil {
+			return fmt.Errorf("invalid proxy: %w", err)
+		}
+		rb.Transport(&http.Transport{
+			Proxy: http.ProxyURL(proxy),
+		})
+	}
+
+	return rb.ToFile(destPath).Fetch(ctx)
 }

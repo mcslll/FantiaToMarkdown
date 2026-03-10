@@ -4,6 +4,7 @@ import (
 	"FantiaToMarkdown/config"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/tidwall/gjson"
@@ -95,5 +96,42 @@ func TestParsePostContentAPI(t *testing.T) {
 	expectedCount := 4 // thumb + 2 photos + 1 blog img
 	if len(pictures) != expectedCount {
 		t.Errorf("Expected %d pictures, got %d: %v", expectedCount, len(pictures), pictures)
+	}
+}
+
+// TestNewRequestGetRetry 测试重试逻辑
+func TestNewRequestGetRetry(t *testing.T) {
+	var attempts int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&attempts, 1)
+		curr := atomic.LoadInt32(&attempts)
+		if curr < 3 {
+			// 模拟连接断开 (导致 EOF)
+			hj, ok := w.(http.Hijacker)
+			if !ok {
+				t.Fatal("webserver doesn't support hijacking")
+			}
+			conn, _, _ := hj.Hijack()
+			conn.Close()
+			return
+		}
+		// 第三次请求成功
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("success"))
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{HostUrl: server.URL}
+	// 运行重试逻辑 (NewRequestGet 会重试最多 3 次)
+	body, err := NewRequestGet(cfg, server.URL, "")
+
+	if err != nil {
+		t.Fatalf("Expected success after retries, got error: %v", err)
+	}
+	if string(body) != "success" {
+		t.Errorf("Expected 'success', got '%s'", string(body))
+	}
+	if atomic.LoadInt32(&attempts) != 3 {
+		t.Errorf("Expected 3 attempts, got %d", attempts)
 	}
 }

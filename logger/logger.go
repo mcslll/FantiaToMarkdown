@@ -3,10 +3,13 @@ package logger
 import (
 	"context"
 	"fmt"
-	"golang.org/x/exp/slog"
+	"io"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"golang.org/x/exp/slog"
 )
 
 // ANSI 颜色代码
@@ -23,17 +26,60 @@ const (
 	Bold   = "\033[1m"
 )
 
+// MultiHandler 将日志分发给多个 Handler
+type MultiHandler struct {
+	handlers []slog.Handler
+}
+
+func (m *MultiHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	for _, h := range m.handlers {
+		if h.Enabled(ctx, level) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *MultiHandler) Handle(ctx context.Context, r slog.Record) error {
+	for _, h := range m.handlers {
+		if h.Enabled(ctx, r.Level) {
+			_ = h.Handle(ctx, r)
+		}
+	}
+	return nil
+}
+
+func (m *MultiHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	newHandlers := make([]slog.Handler, len(m.handlers))
+	for i, h := range m.handlers {
+		newHandlers[i] = h.WithAttrs(attrs)
+	}
+	return &MultiHandler{handlers: newHandlers}
+}
+
+func (m *MultiHandler) WithGroup(name string) slog.Handler {
+	newHandlers := make([]slog.Handler, len(m.handlers))
+	for i, h := range m.handlers {
+		newHandlers[i] = h.WithGroup(name)
+	}
+	return &MultiHandler{handlers: newHandlers}
+}
+
 // ColoredHandler 是一个支持彩色输出的自定义 slog Handler
 type ColoredHandler struct {
-	level slog.Level
-	attrs []slog.Attr
+	level    slog.Level
+	attrs    []slog.Attr
+	writer   io.Writer
+	useColor bool
 }
 
 // NewColoredHandler 创建一个新的彩色处理器
-func NewColoredHandler(level slog.Level) *ColoredHandler {
+func NewColoredHandler(level slog.Level, writer io.Writer, useColor bool) *ColoredHandler {
 	return &ColoredHandler{
-		level: level,
-		attrs: make([]slog.Attr, 0),
+		level:    level,
+		attrs:    make([]slog.Attr, 0),
+		writer:   writer,
+		useColor: useColor,
 	}
 }
 
@@ -56,41 +102,68 @@ func (h *ColoredHandler) Handle(_ context.Context, r slog.Record) error {
 	// 构建基本日志行
 	var builder strings.Builder
 
-	// 时间（灰色）
-	builder.WriteString(Gray + timeStr + Reset)
+	// 时间
+	if h.useColor {
+		builder.WriteString(Gray + timeStr + Reset)
+	} else {
+		builder.WriteString(timeStr)
+	}
 	builder.WriteString(" | ")
 
-	// 级别（带颜色和粗体）
-	builder.WriteString(color + Bold + levelStr + Reset)
+	// 级别
+	if h.useColor {
+		builder.WriteString(color + Bold + levelStr + Reset)
+	} else {
+		builder.WriteString(levelStr)
+	}
 	builder.WriteString(" | ")
 
-	// 文件名和行号（青色）
-	builder.WriteString(Cyan + file + ":" + fmt.Sprintf("%d", line) + Reset)
+	// 文件名和行号
+	callerStr := file + ":" + fmt.Sprintf("%d", line)
+	if h.useColor {
+		builder.WriteString(Cyan + callerStr + Reset)
+	} else {
+		builder.WriteString(callerStr)
+	}
 	builder.WriteString(" | ")
 
-	// 消息（带颜色）
-	builder.WriteString(color + r.Message + Reset)
+	// 消息
+	if h.useColor {
+		builder.WriteString(color + r.Message + Reset)
+	} else {
+		builder.WriteString(r.Message)
+	}
 
 	// 处理属性
-	if r.NumAttrs() > 0 || len(h.attrs) > 0 {
+	if len(h.attrs) > 0 {
 		builder.WriteString(" | ")
-
-		// 添加处理器级别的属性
-		for _, attr := range h.attrs {
+		for i, attr := range h.attrs {
 			builder.WriteString(h.formatAttr(attr))
-			builder.WriteString(" ")
+			if i < len(h.attrs)-1 {
+				builder.WriteString(" ")
+			}
 		}
+	}
 
-		// 添加记录级别的属性
+	if r.NumAttrs() > 0 {
+		builder.WriteString(" | ")
+		first := true
 		r.Attrs(func(attr slog.Attr) bool {
+			if !first {
+				builder.WriteString(" ")
+			}
 			builder.WriteString(h.formatAttr(attr))
-			builder.WriteString(" ")
+			first = false
 			return true
 		})
 	}
 
-	// 输出到标准输出
-	fmt.Println(builder.String())
+	if len(h.attrs) > 0 || r.NumAttrs() > 0 {
+		builder.WriteString(" |")
+	}
+
+	// 输出
+	fmt.Fprintln(h.writer, builder.String())
 	return nil
 }
 
@@ -114,8 +187,10 @@ func (h *ColoredHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	copy(newAttrs, h.attrs)
 	copy(newAttrs[len(h.attrs):], attrs)
 	return &ColoredHandler{
-		level: h.level,
-		attrs: newAttrs,
+		level:    h.level,
+		attrs:    newAttrs,
+		writer:   h.writer,
+		useColor: h.useColor,
 	}
 }
 
@@ -142,11 +217,42 @@ func (h *ColoredHandler) getLevelColorAndString(level slog.Level) (string, strin
 
 // formatAttr 格式化属性
 func (h *ColoredHandler) formatAttr(attr slog.Attr) string {
-	return Purple + attr.Key + Reset + "=" + Blue + fmt.Sprintf("%v", attr.Value) + Reset
+	if h.useColor {
+		return Purple + attr.Key + Reset + "=" + Blue + fmt.Sprintf("%v", attr.Value) + Reset
+	}
+	return fmt.Sprintf("%s=%v", attr.Key, attr.Value)
 }
 
-// SetupLogger 创建配置好的 logger
-func SetupLogger(level slog.Level) *slog.Logger {
-	handler := NewColoredHandler(level)
-	return slog.New(handler)
+// SetupLogger 创建配置好的 logger，同时支持控制台和文件输出
+func SetupLogger(level slog.Level, logFilePath string) *slog.Logger {
+	var handlers []slog.Handler
+
+	// 1. 控制台彩色输出
+	handlers = append(handlers, NewColoredHandler(level, os.Stdout, true))
+
+	// 2. 文件输出 (与终端一致，但不带颜色)
+	if logFilePath != "" {
+		f, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		if err == nil {
+			handlers = append(handlers, NewColoredHandler(level, f, false))
+		}
+	}
+
+	return slog.New(&MultiHandler{handlers: handlers})
+}
+
+// GetLevelColorAndString 辅助方法 (被 client 使用以打印错误)
+func GetLevelColorAndString(level slog.Level) (string, string) {
+	switch level {
+	case slog.LevelDebug:
+		return Cyan, "DEBUG"
+	case slog.LevelInfo:
+		return Green, "INFO "
+	case slog.LevelWarn:
+		return Yellow, "WARN "
+	case slog.LevelError:
+		return Red, "ERROR"
+	default:
+		return White, "TRACE"
+	}
 }

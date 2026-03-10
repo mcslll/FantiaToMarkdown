@@ -38,6 +38,11 @@ func DefaultCookiePath(appDir string) string {
 	return filepath.Join(appDir, "cookies.json")
 }
 
+// DefaultLogPath 返回默认的日志文件路径（appDir/crawler.log）
+func DefaultLogPath(appDir string) string {
+	return filepath.Join(appDir, "crawler.log")
+}
+
 // GetExecutionTime 计算执行耗时并格式化
 func GetExecutionTime(startTime, endTime time.Time) string {
 	duration := endTime.Sub(startTime)
@@ -83,4 +88,17 @@ func UniqueStrings(input []string) []string {
 		}
 	}
 	return u
+}
+
+// IsNumeric 检查字符串是否由纯数字组成且不为空
+func IsNumeric(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }

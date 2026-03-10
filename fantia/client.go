@@ -75,8 +75,27 @@ func buildFantiaHeaders(cookieString string, extraHeaders map[string]string) htt
 	return h
 }
 
-// NewRequestGet 发送 GET 请求并返回响应字节
+// NewRequestGet 发送 GET 请求并返回响应字节，带有重试逻辑
 func NewRequestGet(cfg *config.Config, urlStr string, cookieString string, extraHeaders ...map[string]string) ([]byte, error) {
+	var body []byte
+	var err error
+
+	for retry := 0; retry < 3; retry++ {
+		if retry > 0 {
+			slog.Debug("Retrying GET request", "url", urlStr, "attempt", retry+1)
+			time.Sleep(time.Second * time.Duration(retry))
+		}
+
+		body, err = newRequestGetOnce(cfg, urlStr, cookieString, extraHeaders...)
+		if err == nil {
+			return body, nil
+		}
+	}
+
+	return nil, err
+}
+
+func newRequestGetOnce(cfg *config.Config, urlStr string, cookieString string, extraHeaders ...map[string]string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -93,12 +112,11 @@ func NewRequestGet(cfg *config.Config, urlStr string, cookieString string, extra
 	if cfg.ProxyUrl != "" {
 		proxy, err := url.Parse(cfg.ProxyUrl)
 		if err != nil {
-			slog.Error("Invalid proxy URL", "url", cfg.ProxyUrl, "error", err)
-		} else {
-			rb.Transport(&http.Transport{
-				Proxy: http.ProxyURL(proxy),
-			})
+			return nil, fmt.Errorf("invalid proxy URL %s: %w", cfg.ProxyUrl, err)
 		}
+		rb.Transport(&http.Transport{
+			Proxy: http.ProxyURL(proxy),
+		})
 	}
 
 	var body bytes.Buffer

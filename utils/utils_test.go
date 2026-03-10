@@ -49,3 +49,25 @@ func TestGetExecutionTime(t *testing.T) {
 		t.Error("GetExecutionTime returned empty string")
 	}
 }
+
+func TestIsNumeric(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected bool
+	}{
+		{"12345", true},
+		{"0", true},
+		{"", false},
+		{"12a34", false},
+		{"-123", false},
+		{" 123 ", false},
+		{"--tag", false},
+	}
+
+	for _, tt := range tests {
+		result := IsNumeric(tt.input)
+		if result != tt.expected {
+			t.Errorf("IsNumeric(%s) = %v; want %v", tt.input, result, tt.expected)
+		}
+	}
+}
