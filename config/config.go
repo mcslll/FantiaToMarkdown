@@ -1,6 +1,9 @@
 package config
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Config 统一配置结构体，消除全局可变状态
 type Config struct {
@@ -15,6 +18,10 @@ type Config struct {
 func NewConfig(host string, dataDir string, cookiePath string, proxyUrl string) *Config {
 	if host == "" {
 		host = "fantia.jp"
+	}
+	// 自动补全代理协议头
+	if proxyUrl != "" && !strings.Contains(proxyUrl, "://") {
+		proxyUrl = "http://" + proxyUrl
 	}
 	return &Config{
 		Host:       host,
